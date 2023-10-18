@@ -5,7 +5,7 @@ type ChanReq struct {
 	RetChan  chan interface{}
 }
 
-type ChaneRet struct {
+type ChanRet struct {
 	Variable interface{}
 	Err      error
 }
