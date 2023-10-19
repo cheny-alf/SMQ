@@ -1,8 +1,11 @@
 package message
 
 import (
-	"SMQ/util"
+	"context"
 	"log"
+
+	"SMQ/queue"
+	"SMQ/util"
 )
 
 type Topic struct {
@@ -15,6 +18,7 @@ type Topic struct {
 	routerSyncChan      chan struct{}
 	exitChan            chan util.ChanReq
 	channelWriteStarted bool
+	backend             queue.Queue
 }
 
 var (
@@ -32,6 +36,7 @@ func NewTopic(name string, inMemSize int) *Topic {
 		readSyncChan:        make(chan struct{}),
 		routerSyncChan:      make(chan struct{}),
 		exitChan:            make(chan util.ChanReq),
+		backend:             queue.NewDiskQueue(name),
 	}
 	go topic.Router(inMemSize)
 	return topic
@@ -46,58 +51,37 @@ func GetTopic(name string) *Topic {
 	return (<-topicChan).(*Topic)
 }
 
-func TopicFactory(inMemSize int) {
+func TopicFactory(ctx context.Context, inMemSize int) {
+	var (
+		topicReq util.ChanReq
+		name     string
+		topic    *Topic
+		ok       bool
+	)
 	for {
-		topicReq := <-newTopicChan
-		name := topicReq.Variable.(string)
-		if topic, ok := TopicMap[name]; !ok {
-			topic = NewTopic(name, inMemSize)
-			TopicMap[name] = topic
-			log.Printf("Topic %s created", name)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			topicReq = <-newTopicChan
+			name = topicReq.Variable.(string)
+			if topic, ok = TopicMap[name]; !ok {
+				topic = NewTopic(name, inMemSize)
+				TopicMap[name] = topic
+				log.Printf("TOPIC %s CREATED", name)
+			}
+			topicReq.RetChan <- topic
 		}
-		topicReq.RetChan <- topicReq
 	}
 }
 
-func (t *Topic) Router(inMemSize int) {
-	var msg *Message
-	closeChan := make(chan struct{})
-	for {
-		select {
-		case channelReq := <-t.newChannelChan:
-			channelName := channelReq.Variable.(string)
-			channel, ok := t.channelMap[channelName]
-			if !ok {
-				channel = NewChannel(channelName, inMemSize)
-				t.channelMap[channelName] = channel
-				log.Printf("Topic[%s]: new channel[%s]", t.name, channel.name)
-			}
-			channelReq.RetChan <- channel
-			if !t.channelWriteStarted {
-				go t.MessagePump(closeChan)
-				t.channelWriteStarted = true
-			}
-		case msg = <-t.incomingMessageChan:
-			select {
-			case t.msgChan <- msg:
-				log.Printf("Topic[%s] wrote message", t.name)
-			default:
-			}
-		case <-t.readSyncChan:
-			<-t.routerSyncChan
-		case closeReq := <-t.exitChan:
-			log.Printf("Topic[%s]: closeing", t.name)
-			for _, channel := range t.channelMap {
-				err := channel.Close()
-				if err != nil {
-					log.Printf("Error: channel[%s] close - %s", channel.name, err.Error())
-				}
-			}
-			close(closeChan)
-			closeReq.RetChan <- nil
-		}
+func (t *Topic) GetChannel(channelName string) *Channel {
+	channelRet := make(chan interface{})
+	t.newChannelChan <- util.ChanReq{
+		Variable: channelName,
+		RetChan:  channelRet,
 	}
-
+	return (<-channelRet).(*Channel)
 }
 
 func (t *Topic) PutMessage(msg *Message) {
@@ -109,16 +93,75 @@ func (t *Topic) MessagePump(closeChan <-chan struct{}) {
 	for {
 		select {
 		case msg = <-t.msgChan:
+		case <-t.backend.ReadReadyChan():
+			bytes, err := t.backend.Get()
+			if err != nil {
+				log.Printf("ERROR: t.backend.Get() - %s", err.Error())
+				continue
+			}
+			msg = NewMessage(bytes)
 		case <-closeChan:
 			return
 		}
+
 		t.readSyncChan <- struct{}{}
+
 		for _, channel := range t.channelMap {
 			go func(ch *Channel) {
 				ch.PutMessage(msg)
 			}(channel)
 		}
+
 		t.routerSyncChan <- struct{}{}
+	}
+}
+
+func (t *Topic) Router(inMemSize int) {
+	var (
+		msg       *Message
+		closeChan = make(chan struct{})
+	)
+	for {
+		select {
+		case channelReq := <-t.newChannelChan:
+			channelName := channelReq.Variable.(string)
+			channel, ok := t.channelMap[channelName]
+			if !ok {
+				channel = NewChannel(channelName, inMemSize)
+				t.channelMap[channelName] = channel
+				log.Printf("TOPIC(%s): new channel(%s)", t.name, channel.name)
+			}
+			channelReq.RetChan <- channel
+			if !t.channelWriteStarted {
+				go t.MessagePump(closeChan)
+				t.channelWriteStarted = true
+			}
+		case msg = <-t.incomingMessageChan:
+			select {
+			case t.msgChan <- msg:
+				log.Printf("TOPIC(%s) wrote message", t.name)
+			default:
+				err := t.backend.Put(msg.data)
+				if err != nil {
+					log.Printf("ERROR: t.backend.Put() - %s", err.Error())
+				}
+				log.Printf("TOPIC(%s): wrote to backend", t.name)
+			}
+		case <-t.readSyncChan:
+			<-t.routerSyncChan
+		case closeReq := <-t.exitChan:
+			log.Printf("TOPIC(%s): closing", t.name)
+
+			for _, channel := range t.channelMap {
+				err := channel.Close()
+				if err != nil {
+					log.Printf("ERROR: channel(%s) close - %s", channel.name, err.Error())
+				}
+			}
+
+			close(closeChan)
+			closeReq.RetChan <- t.backend.Close()
+		}
 	}
 }
 

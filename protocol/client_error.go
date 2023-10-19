@@ -1,6 +1,8 @@
 package protocol
 
-import "io"
+import (
+	"io"
+)
 
 const (
 	ClientInit = iota
@@ -9,7 +11,7 @@ const (
 )
 
 type StatefulReadWriter interface {
-	io.ReadWriteCloser
+	io.ReadWriter
 	GetState() int
 	SetState(state int)
 	String() string
@@ -24,8 +26,8 @@ func (e ClientError) Error() string {
 }
 
 var (
-	ClientErrInvalid    = ClientError{errStr: "E_INVALID"}
-	ClientErrBadTopic   = ClientError{errStr: "E_BAD_TOPIC"}
-	ClientErrBadChannel = ClientError{errStr: "E_BAD_CHANNEL"}
-	ClientErrBadMessage = ClientError{errStr: "E_BAD_MESSAGE"}
+	ClientErrInvalid    = ClientError{"E_INVALID"}
+	ClientErrBadTopic   = ClientError{"E_BAD_TOPIC"}
+	ClientErrBadChannel = ClientError{"E_BAD_CHANNEL"}
+	ClientErrBadMessage = ClientError{"E_BAD_MESSAGE"}
 )

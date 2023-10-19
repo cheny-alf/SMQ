@@ -6,6 +6,6 @@ type ChanReq struct {
 }
 
 type ChanRet struct {
-	Variable interface{}
 	Err      error
+	Variable interface{}
 }

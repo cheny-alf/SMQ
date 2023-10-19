@@ -1,10 +1,12 @@
-package SMQ
+package server
 
 import (
-	"SMQ/protocol"
+	"context"
 	"encoding/binary"
 	"io"
 	"log"
+
+	"SMQ/protocol"
 )
 
 type Client struct {
@@ -14,11 +16,7 @@ type Client struct {
 }
 
 func NewClient(conn io.ReadWriteCloser, name string) *Client {
-	return &Client{
-		conn:  conn,
-		name:  name,
-		state: -1,
-	}
+	return &Client{conn, name, -1}
 }
 
 func (c *Client) String() string {
@@ -38,7 +36,9 @@ func (c *Client) Read(data []byte) (int, error) {
 }
 
 func (c *Client) Write(data []byte) (int, error) {
-	err := binary.Write(c.conn, binary.BigEndian, int32(len(data)))
+	var err error
+
+	err = binary.Write(c.conn, binary.BigEndian, int32(len(data)))
 	if err != nil {
 		return 0, err
 	}
@@ -47,19 +47,20 @@ func (c *Client) Write(data []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	return n + 4, nil
 }
 
-func (c *Client) Close() error {
-	log.Printf("Client[%s]:closing", c.String())
-	return c.conn.Close()
+func (c *Client) Close() {
+	log.Printf("CLIENT(%s): closing", c.String())
+	c.conn.Close()
 }
 
 // Handle reads data from the client, keeps state, and responds.
-func (c *Client) Handle() {
+func (c *Client) Handle(ctx context.Context) {
 	defer c.Close()
 	proto := &protocol.Protocol{}
-	err := proto.IOLoop(c)
+	err := proto.IOLoop(ctx, c)
 	if err != nil {
 		log.Printf("ERROR: client(%s) - %s", c.String(), err.Error())
 		return

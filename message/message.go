@@ -1,15 +1,18 @@
 package message
 
 type Message struct {
-	data      []byte // 前16位位uuid，后面为body
+	data      []byte
 	timerChan chan struct{}
 }
 
 func NewMessage(data []byte) *Message {
-	return &Message{data: data}
+	return &Message{
+		data:      data,
+		timerChan: make(chan struct{}),
+	}
 }
 
-func (m *Message) UUID() []byte {
+func (m *Message) Uuid() []byte {
 	return m.data[:16]
 }
 

@@ -1,17 +1,23 @@
 package util
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
 	"log"
 )
 
-var UUIDChan = make(chan []byte, 1000)
+var UuidChan = make(chan []byte, 1000)
 
-func UUIDFactory() {
+func UuidFactory(ctx context.Context) {
 	for {
-		UUIDChan <- uuid()
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			UuidChan <- uuid()
+		}
 	}
 }
 
@@ -24,6 +30,6 @@ func uuid() []byte {
 	return b
 }
 
-func UUID2String(b []byte) string {
+func UuidToStr(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
